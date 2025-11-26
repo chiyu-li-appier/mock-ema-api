@@ -35,21 +35,17 @@ jobs:
           INSTALLATION_ID: ${{ secrets.INSTALLATION_ID }}
           PRIVATE_KEY_PATH: private_key.pem
         run: |
-          # Enable command debugging
+          echo ">>> RUNNING THE LATEST WORKFLOW - VERSION 5 <<<"
           set -x
 
-          # Configure git
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
-          # Forcefully sync with the remote branch to avoid divergence issues
           git checkout main
           git reset --hard origin/main
 
-          # Run the bot script to potentially create/modify users.json
           python bot.py
 
-          # Check for changes and commit
           if [[ -n $(git status --porcelain users.json) ]]; then
             git add users.json
             git commit -m "feat(bot): Sync users from eam-dev.yml"
