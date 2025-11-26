@@ -6,10 +6,13 @@ import os
 import yaml
 import json
 import logging
+import secrets
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 logging.basicConfig(
     level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
 )
 
 load_dotenv(override=True)
@@ -23,10 +26,8 @@ if not PRIVATE_KEY_PATH:
 
 OWNER = "chiyu-li-appier"
 REPO_READ = "mock-heqa"
-REPO_WRITE = "mock-eam-api"
 FILE_PATH = "eam-dev.yml"
 USERS_DB = "users.json"
-MOCK_API_URL = "http://127.0.0.1:5000/create_user"
 
 
 def get_existing_users(db_file):
@@ -37,13 +38,13 @@ def get_existing_users(db_file):
         users = set()
         for line in f:
             try:
-                users.add(json.loads(line)["email"])
+                if line.strip():
+                    users.add(json.loads(line)["email"])
             except json.JSONDecodeError:
                 logging.warning(f"Could not decode line: {line}")
         return users
 
 
-logging.info("Step 1: Generating JWT...")
 try:
     with open(PRIVATE_KEY_PATH, "r") as key_file:
         PRIVATE_KEY = key_file.read()
@@ -55,31 +56,37 @@ try:
         logging.info("JWT generated.")
 except Exception as e:
     logging.exception(f"Error generating JWT: {e}")
+    exit(1)
 
-logging.info("Step 2: Getting Installation Access Token...")
-resp = requests.post(
-    f"https://api.github.com/app/installations/{INSTALLATION_ID}/access_tokens",
-    headers={
-        "Authorization": f"Bearer {jwt_token}",
-        "Accept": "application/vnd.github+json",
-    },
-)
-resp.raise_for_status()
-token = resp.json()["token"]
-logging.info("Access Token received.")
+try:
+    resp = requests.post(
+        f"https://api.github.com/app/installations/{INSTALLATION_ID}/access_tokens",
+        headers={
+            "Authorization": f"Bearer {jwt_token}",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    resp.raise_for_status()
+    token = resp.json()["token"]
+except requests.exceptions.RequestException as e:
+    logging.exception(f"Error getting access token: {e}")
+    exit(1)
 
-logging.info(f"Step 3: Reading {FILE_PATH} from repo {OWNER}/{REPO_READ}...")
-file_resp = requests.get(
-    f"https://api.github.com/repos/{OWNER}/{REPO_READ}/contents/{FILE_PATH}",
-    headers={"Authorization": f"token {token}"},
-)
-file_resp.raise_for_status()
-file_json = file_resp.json()
 
-content = base64.b64decode(file_json["content"]).decode("utf-8")
-logging.info(f"Successfully read file content.")
+try:
+    file_resp = requests.get(
+        f"https://api.github.com/repos/{OWNER}/{REPO_READ}/contents/{FILE_PATH}",
+        headers={"Authorization": f"token {token}"},
+    )
+    file_resp.raise_for_status()
+    file_json = file_resp.json()
+    content = base64.b64decode(file_json["content"]).decode("utf-8")
+    logging.info(f"Successfully read file content.")
+except requests.exceptions.RequestException as e:
+    logging.exception(f"Error reading file from GitHub: {e}")
+    exit(1)
 
-logging.info("Step 4: Processing users...")
+
 try:
     data = yaml.safe_load(content)
     members = data.get("members", [])
@@ -90,22 +97,32 @@ except yaml.YAMLError as e:
 if members:
     existing_users = get_existing_users(USERS_DB)
     logging.info(f"Found {len(existing_users)} existing users in {USERS_DB}.")
-
+    
+    users_created = 0
     for member in members:
         email = f"{member}@appier.com"
         if email in existing_users:
             logging.info(f"User '{email}' already exists. Skipping.")
         else:
-            logging.info(f"User '{email}' not found. Creating account via mock API...")
+            logging.info(f"User '{email}' not found. Creating and saving user.")
             try:
-                response = requests.get(MOCK_API_URL, params={"email": email})
-                response.raise_for_status()
-                new_user = response.json()
-                logging.info(
-                    f"Successfully created user: {new_user['email']} with API key: {new_user['api_key']}"
-                )
-            except requests.exceptions.RequestException as e:
-                logging.error(f"Error creating user '{email}': {e}")
+                new_user = {
+                    "email": email,
+                    "api_key": secrets.token_hex(16),
+                    "creation_time": datetime.now(timezone.utc).isoformat()
+                }
+                with open(USERS_DB, "a") as f:
+                    f.write(json.dumps(new_user) + "\n")
+                logging.info(f"Successfully created and saved user: {email}")
+                users_created += 1
+            except Exception as e:
+                logging.exception(f"Error creating or writing user '{email}': {e}")
+
+    if users_created > 0:
+        logging.info(f"Finished processing. Created {users_created} new user(s).")
+    else:
+        logging.info("Finished processing. No new users were created.")
+
 else:
     logging.info("No members found in the YAML file. Nothing to do.")
 
