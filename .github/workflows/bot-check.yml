@@ -35,9 +35,6 @@ jobs:
           INSTALLATION_ID: ${{ secrets.INSTALLATION_ID }}
           PRIVATE_KEY_PATH: private_key.pem
         run: |
-          echo ">>> RUNNING THE LATEST WORKFLOW - VERSION 5 <<<"
-          set -x
-
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
